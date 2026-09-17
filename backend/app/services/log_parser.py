@@ -1,99 +1,112 @@
 """Log parsing and chunking service."""
-import uuid
-
-from fastapi import UploadFile
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+import logging
+import re
+from typing import Literal
 
 from app.config import settings
-from app.services.embedding import get_embedding
+from app.schemas import ChunkDTO, LogMetadata
+
+logger = logging.getLogger(__name__)
+
+LogSource = Literal["nginx", "app", "custom"]
+
+NGINX_PATTERN = re.compile(
+    r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3} - .* \[.+\] "[A-Z]+ .+ HTTP/\d\.\d"'
+)
+APACHE_PATTERN = re.compile(
+    r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3} - .* \[.+\] "[A-Z]+ .+ HTTP/\d\.\d"'
+)
+SYSLOG_PATTERN = re.compile(
+    r'^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\S+\s+\S+:'
+)
+APP_JSON_PATTERN = re.compile(r'^\s*\{.*"(level|timestamp|message)"')
 
 
-async def detect_format(content: str) -> str:
-    """Detect log format from content. Returns 'nginx', 'app', or 'custom'."""
-    # TODO: Implement format detection heuristics
+def detect_source(content: str) -> LogSource:
+    """Detect log format from content sample."""
+    lines = content.split("\n")[:20]
+
+    nginx_count = sum(1 for line in lines if NGINX_PATTERN.match(line))
+    syslog_count = sum(1 for line in lines if SYSLOG_PATTERN.match(line))
+    app_count = sum(1 for line in lines if APP_JSON_PATTERN.match(line))
+
+    if nginx_count >= 3:
+        return "nginx"
+    if app_count >= 3:
+        return "app"
+    if syslog_count >= 3:
+        return "custom"
+
     return "custom"
 
 
-def chunk_lines(lines: list[str], chunk_size: int, overlap: int) -> list[dict]:
+def chunk_lines(
+    lines: list[str],
+    chunk_size: int | None = None,
+    overlap: int | None = None,
+) -> list[ChunkDTO]:
     """Split lines into overlapping chunks."""
-    chunks = []
+    chunk_size = chunk_size or settings.chunk_size_lines
+    overlap = overlap or settings.chunk_overlap_lines
+
+    if not lines:
+        return []
+
+    chunks: list[ChunkDTO] = []
     i = 0
     chunk_idx = 0
+    step = max(1, chunk_size - overlap)
 
     while i < len(lines):
         end = min(i + chunk_size, len(lines))
-        chunk_text = "\n".join(lines[i:end])
-        chunks.append({
-            "chunk_idx": chunk_idx,
-            "line_start": i + 1,
-            "line_end": end,
-            "text": chunk_text,
-        })
-        chunk_idx += 1
-        i += chunk_size - overlap
+        chunk_lines_slice = lines[i:end]
+        chunk_text = "\n".join(chunk_lines_slice)
+
+        if chunk_text.strip():
+            chunks.append(
+                ChunkDTO(
+                    chunk_idx=chunk_idx,
+                    line_start=i + 1,
+                    line_end=end,
+                    text=chunk_text,
+                )
+            )
+            chunk_idx += 1
+
+        i += step
 
     return chunks
 
 
-async def process_log_upload(
-    db: AsyncSession,
-    file: UploadFile,
-    source: str,
-) -> dict:
-    """Process uploaded log file: store, chunk, embed."""
-    content = await file.read()
-    content_str = content.decode("utf-8", errors="replace")
-    byte_size = len(content)
+def parse_log_content(
+    content: str,
+    source: LogSource | None = None,
+) -> tuple[LogMetadata, list[ChunkDTO]]:
+    """Parse log content into metadata and chunks."""
+    if source is None:
+        source = detect_source(content)
 
-    # Insert log record
-    log_id = uuid.uuid4()
-    await db.execute(
-        text("""
-            INSERT INTO logs (id, source, raw, byte_size)
-            VALUES (:id, :source, :raw, :byte_size)
-        """),
-        {"id": log_id, "source": source, "raw": content_str, "byte_size": byte_size},
+    lines = content.split("\n")
+    lines = [line for line in lines if line.strip()]
+
+    chunks = chunk_lines(lines)
+
+    metadata = LogMetadata(
+        source=source,
+        total_lines=len(lines),
+        total_chunks=len(chunks),
+        byte_size=len(content.encode("utf-8")),
     )
 
-    # Create analysis job
-    job_id = uuid.uuid4()
-    await db.execute(
-        text("""
-            INSERT INTO analysis_jobs (id, log_id, status)
-            VALUES (:id, :log_id, 'pending')
-        """),
-        {"id": job_id, "log_id": log_id},
+    logger.info(
+        f"Parsed log: source={source}, lines={len(lines)}, chunks={len(chunks)}"
     )
 
-    await db.commit()
+    return metadata, chunks
 
-    # TODO: Trigger background task to chunk and embed
-    # For now, process inline (blocking)
-    lines = content_str.split("\n")
-    chunks = chunk_lines(
-        lines,
-        settings.chunk_size_lines,
-        settings.chunk_overlap_lines,
-    )
 
-    for chunk in chunks:
-        embedding = await get_embedding(chunk["text"])
-        await db.execute(
-            text("""
-                INSERT INTO log_chunks (log_id, chunk_idx, line_start, line_end, text, embedding)
-                VALUES (:log_id, :chunk_idx, :line_start, :line_end, :text, :embedding)
-            """),
-            {
-                "log_id": log_id,
-                "chunk_idx": chunk["chunk_idx"],
-                "line_start": chunk["line_start"],
-                "line_end": chunk["line_end"],
-                "text": chunk["text"],
-                "embedding": embedding,
-            },
-        )
-
-    await db.commit()
-
-    return {"log_id": log_id, "job_id": job_id}
+def validate_source(source: str) -> LogSource:
+    """Validate and return source type."""
+    if source in ("nginx", "app", "custom"):
+        return source
+    raise ValueError(f"Invalid source: {source}. Must be nginx, app, or custom.")

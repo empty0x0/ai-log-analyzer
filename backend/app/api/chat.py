@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import ChatQueryRequest, ChatQueryResponse, ResponseEnvelope
+from app.schemas import ChatQueryRequest, ChatQueryResponse, ResponseEnvelope
 from app.security.auth import verify_api_key
 from app.security.rate_limit import check_rate_limit
 from app.agents.analyzer import analyze_logs

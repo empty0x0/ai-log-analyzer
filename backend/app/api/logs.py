@@ -6,17 +6,21 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import (
+from app.schemas import (
     JobStatusResponse,
+    LogChunkItem,
     LogListResponse,
     LogUploadResponse,
     ResponseEnvelope,
 )
 from app.security.auth import verify_api_key
-from app.services.job import get_job_status
-from app.services.log_parser import process_log_upload
+from app.services import vector_store
+from app.services.embedding import get_embeddings_batch
+from app.services.log_parser import parse_log_content, validate_source
 
 router = APIRouter()
+
+MAX_FILE_SIZE = 100 * 1024 * 1024
 
 
 @router.post("/upload", response_model=ResponseEnvelope)
@@ -30,17 +34,40 @@ async def upload_log(
     """Upload a log file for analysis."""
     request_id = str(uuid.uuid4())
 
-    if source not in ("nginx", "app", "custom"):
+    try:
+        source = validate_source(source)
+    except ValueError:
         raise HTTPException(status_code=400, detail="Invalid source type")
 
-    result = await process_log_upload(db, file, source)
+    content = await file.read()
+
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File too large")
+
+    content_str = content.decode("utf-8", errors="replace")
+    metadata, chunks = parse_log_content(content_str, source)
+
+    log_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+
+    await vector_store.insert_log(db, log_id, source, content_str, metadata.byte_size)
+    await vector_store.insert_job(db, job_id, log_id)
+
+    if chunks:
+        texts = [c.text for c in chunks]
+        embeddings = await get_embeddings_batch(texts)
+        for chunk, emb in zip(chunks, embeddings):
+            chunk.embedding = emb
+        await vector_store.insert_chunks(db, log_id, chunks)
+
+    await db.commit()
 
     return ResponseEnvelope(
         code=0,
         message="success",
         data=LogUploadResponse(
-            log_id=result["log_id"],
-            job_id=result["job_id"],
+            log_id=log_id,
+            job_id=job_id,
             status="pending",
         ).model_dump(),
         request_id=request_id,
@@ -57,7 +84,7 @@ async def get_job(
     """Get analysis job status."""
     request_id = str(uuid.uuid4())
 
-    job = await get_job_status(db, job_id)
+    job = await vector_store.get_job(db, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -72,21 +99,29 @@ async def get_job(
 @router.get("", response_model=ResponseEnvelope)
 async def list_logs(
     request: Request,
-    limit: int = 20,
+    limit: int = 10,
     cursor: str | None = None,
     db: AsyncSession = Depends(get_db),
     _: None = Depends(verify_api_key),
 ) -> ResponseEnvelope:
-    """List log chunks with pagination."""
+    """List recent log chunks (default 10)."""
     request_id = str(uuid.uuid4())
 
-    # TODO: Implement pagination logic in services/search.py
-    items: list = []
-    next_cursor = None
+    if limit > 100:
+        limit = 100
+
+    items, next_cursor = await vector_store.get_recent_chunks(db, limit, cursor)
+    total = await vector_store.get_chunks_count(db)
+
+    chunk_items = [LogChunkItem(**item) for item in items]
 
     return ResponseEnvelope(
         code=0,
         message="success",
-        data=LogListResponse(items=items, next_cursor=next_cursor).model_dump(),
+        data=LogListResponse(
+            items=chunk_items,
+            total=total,
+            next_cursor=next_cursor,
+        ).model_dump(),
         request_id=request_id,
     )

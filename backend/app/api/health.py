@@ -3,7 +3,7 @@ from fastapi import APIRouter
 from sqlalchemy import text
 
 from app.database import async_session_maker
-from app.models import HealthResponse
+from app.schemas import HealthResponse
 
 router = APIRouter()
 
