@@ -230,17 +230,62 @@ CREATE INDEX idx_log_chunks_anomaly ON log_chunks (anomaly_score DESC);
 
 ## Gateway Routing (Envoy)
 
-```yaml
-# Model name → upstream mapping
-routes:
-  - match: { prefix: "/v1/chat" }
-    route:
-      cluster: deepseek    # if model starts with "deepseek-"
-      cluster: qwen        # if model starts with "qwen-"
-      cluster: vertex-ai   # if model starts with "claude-"
+### Route Paths (Path Prefix Routing)
+
+| Gateway Path | Upstream | Rewritten To |
+|--------------|----------|--------------|
+| `/api/deepseek/*` | api.deepseek.com | `/v1/*` |
+| `/api/qwen/*` | dashscope.aliyuncs.com | `/compatible-mode/v1/*` |
+| `/api/vertex/{model}:rawPredict` | us-east5-aiplatform.googleapis.com | `/v1/projects/{project}/locations/{region}/publishers/anthropic/models/{model}:rawPredict` |
+
+### Backend Usage Example
+
+```python
+# gateway/client.py
+import httpx
+
+AI_GATEWAY_URL = "http://envoy:10000"
+
+async def call_deepseek(messages: list, model: str = "deepseek-chat"):
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{AI_GATEWAY_URL}/api/deepseek/chat/completions",
+            json={"model": model, "messages": messages}
+        )
+        return resp.json()
+
+async def call_vertex_claude(messages: list, model: str = "claude-opus-5"):
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{AI_GATEWAY_URL}/api/vertex/{model}:rawPredict",
+            json={
+                "anthropic_version": "vertex-2023-10-16",
+                "max_tokens": 4096,
+                "messages": messages
+            }
+        )
+        return resp.json()
 ```
 
-Authentication per upstream:
-- DeepSeek: `Authorization: Bearer ${DEEPSEEK_API_KEY}`
-- Qwen: `Authorization: Bearer ${QWEN_API_KEY}`
-- Vertex AI: `Authorization: Bearer ${GCP_ACCESS_TOKEN}` (via ADC)
+### Authentication (Handled by Envoy)
+
+| Upstream | Auth Method | Injected By |
+|----------|-------------|-------------|
+| DeepSeek | `Authorization: Bearer ${DEEPSEEK_API_KEY}` | Envoy config |
+| Qwen | `Authorization: Bearer ${QWEN_API_KEY}` | Envoy config |
+| Vertex AI | `Authorization: Bearer ${GCP_ACCESS_TOKEN}` | Token refresh sidecar → Lua filter |
+
+### Token Refresh (Vertex AI)
+
+```
+┌─────────────┐     writes token      ┌──────────────────┐
+│ gcloud auth │ ───────────────────► │ /var/run/secrets │
+│ sidecar     │     every 45min       │ /gcp-token       │
+└─────────────┘                       └────────┬─────────┘
+                                               │ reads
+                                               ▼
+                                      ┌────────────────┐
+                                      │ Envoy Lua      │
+                                      │ filter         │
+                                      └────────────────┘
+```
