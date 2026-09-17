@@ -11,7 +11,7 @@ Training demo: Upload Nginx/Apache/syslog logs → AI anomaly summarization → 
 | Frontend | Next.js 14 (App Router) + Tailwind |
 | Vector DB | Postgres 16 + pgvector |
 | LLM Access | Envoy AI Gateway → 3 upstreams (DeepSeek, Qwen, Vertex AI Claude) |
-| Embedding | Local sentence-transformers (BAAI/bge-small-en-v1.5, 384-dim), NOT through gateway |
+| Embedding | Local sentence-transformers (intfloat/multilingual-e5-small, 384-dim, **Chinese+English**), NOT through gateway |
 | Orchestration | docker-compose v2 |
 
 ### LLM Gateway Architecture
@@ -23,6 +23,7 @@ Training demo: Upload Nginx/Apache/syslog logs → AI anomaly summarization → 
 - Business code is provider-agnostic, only talks to Envoy
 
 ### Embedding (Exception to Gateway Rule)
+- Model: `intfloat/multilingual-e5-small` (supports Chinese + English)
 - Local embedding via sentence-transformers is NOT an external provider call
 - Does NOT go through Envoy gateway
 - Offline fallback: deterministic hash vector

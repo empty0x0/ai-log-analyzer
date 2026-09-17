@@ -85,7 +85,10 @@ Output:  Flagged entries: brute force attempts, unusual user agents, geo anomali
 | Supported formats | nginx, apache, syslog | Common formats for demo |
 | Chunk size | 50 lines | Balance context vs embedding |
 | LLM rate limit | 10 req/min | Cost control |
-| Vector dimension | 384 (fixed) | bge-small-en model |
+| Vector dimension | 384 (fixed) | Embedding model output |
+| **Language support** | **Chinese + English** | Logs and queries in both languages |
+
+> **Note**: Chinese support requires multilingual embedding model. Current `bge-small-en` is English-only. Recommend switching to `BAAI/bge-m3` (1024-dim) or `intfloat/multilingual-e5-small` (384-dim). See CLAUDE.md for tech stack update.
 
 ---
 
@@ -256,14 +259,14 @@ Output:  Flagged entries: brute force attempts, unusual user agents, geo anomali
 | Vertex AI | Quota / outage | Route to DeepSeek or Qwen |
 | sentence-transformers | Model download blocked | Pre-bundled model in image; hash fallback |
 
-### 5.4 Open Questions (To Be Confirmed)
+### 5.4 Confirmed Decisions
 
-| # | Question | Owner | Deadline | Default if No Answer |
-|---|----------|-------|----------|---------------------|
-| Q1 | Should anomaly detection use LLM or heuristics for MVP? | Product | Before /build | LLM-based |
-| Q2 | Need Chinese language support for logs/queries? | Product | Before /build | English only |
-| Q3 | Max concurrent jobs per session? | Product | Before /build | No limit (demo) |
-| Q4 | Should evidence show line numbers from original file? | Product | Before /build | No, just content snippet |
+| # | Question | Decision | Confirmed |
+|---|----------|----------|-----------|
+| Q1 | Anomaly detection method | **LLM-based** (not heuristics) | 2026-09-17 |
+| Q2 | Language support | **Chinese + English** (logs and queries) | 2026-09-17 |
+| Q3 | Max concurrent jobs | **No limit** (demo scope) | 2026-09-17 |
+| Q4 | Evidence line numbers | **No** (content snippet only) | 2026-09-17 |
 
 ---
 

@@ -27,11 +27,11 @@
 ┌───────────────┐    ┌─────────────────────┐    ┌─────────────────────────────┐
 │ sentence-     │    │  Postgres 16        │    │     Envoy AI Gateway        │
 │ transformers  │    │  + pgvector         │    │     (Model Router)          │
-│ bge-small-en  │    │                     │    └──────────┬──────────────────┘
-│ (384-dim)     │    │  ┌───────────────┐  │               │
-└───────────────┘    │  │ log_chunks    │  │    ┌──────────┼──────────┐
-                     │  │ .embedding    │  │    │          │          │
-                     │  │ vector(384)   │  │    ▼          ▼          ▼
+│ multilingual  │    │                     │    └──────────┬──────────────────┘
+│ e5-small      │    │  ┌───────────────┐  │               │
+│ (384-dim)     │    │  │ log_chunks    │  │    ┌──────────┼──────────┐
+│ (ZH+EN)       │    │  │ .embedding    │  │    │          │          │
+└───────────────┘    │  │ vector(384)   │  │    ▼          ▼          ▼
                      │  └───────────────┘  │  ┌─────┐  ┌──────┐  ┌─────────┐
                      └─────────────────────┘  │Deep │  │ Qwen │  │Vertex AI│
                                               │Seek │  │      │  │ Claude  │
@@ -198,7 +198,7 @@ Response:
 | id | uuid | Primary key |
 | job_id | uuid | Foreign key → jobs |
 | content | text | Log content (chunked) |
-| embedding | vector(384) | bge-small-en embedding |
+| embedding | vector(384) | multilingual-e5-small embedding (ZH+EN) |
 | anomaly_score | float | 0.0 - 1.0, higher = more anomalous |
 | metadata | jsonb | {source, line_start, line_end, timestamp_range} |
 | created_at | timestamptz | Chunk creation time |
