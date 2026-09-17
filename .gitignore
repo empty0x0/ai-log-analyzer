@@ -1,1 +1,47 @@
+# OS
 .DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+.next/
+out/
+.pnpm-store/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Docker
+infra/gcp-token
+
+# Logs
+*.log
+logs/
+!samples/*.log
+
+# Poetry
+poetry.lock
+
+# pnpm
+pnpm-lock.yaml

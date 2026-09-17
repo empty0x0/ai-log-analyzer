@@ -1,0 +1,89 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-loganalyzer}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-app} -d ${POSTGRES_DB:-loganalyzer}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-app}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+      - POSTGRES_DB=${POSTGRES_DB:-loganalyzer}
+      - AI_GATEWAY_URL=http://envoy:10000
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-intfloat/multilingual-e5-small}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - API_KEY_SECRET=${API_KEY_SECRET:-changeme}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - embedding_cache:/root/.cache/huggingface
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+  envoy:
+    image: envoyproxy/envoy:v1.31-latest
+    volumes:
+      - ./infra/envoy.yaml:/etc/envoy/envoy.yaml:ro
+      - ./infra/gcp-token:/var/run/secrets/gcp-token:ro
+    ports:
+      - "10000:10000"
+      - "9901:9901"
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - QWEN_API_KEY=${QWEN_API_KEY:-}
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID:-}
+      - GCP_REGION=${GCP_REGION:-us-east5}
+    command: ["envoy", "-c", "/etc/envoy/envoy.yaml", "--log-level", "info"]
+
+  token-refresh:
+    image: google/cloud-sdk:slim
+    volumes:
+      - ./infra/token-refresh.sh:/app/token-refresh.sh:ro
+      - ./infra/gcp-token:/var/run/secrets/gcp-token
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/app/credentials.json:ro
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
+    command: ["bash", "/app/token-refresh.sh"]
+    restart: unless-stopped
+
+  mock-llm:
+    build:
+      context: ./infra/mock-llm
+      dockerfile: Dockerfile
+    ports:
+      - "10001:8080"
+    profiles:
+      - mock
+
+volumes:
+  postgres_data:
+  embedding_cache:
