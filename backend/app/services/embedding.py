@@ -39,8 +39,11 @@ def _get_model():
 
 def _hash_fallback(text: str) -> list[float]:
     """Deterministic hash-based fallback vector (384-dim) for offline mode."""
-    h = hashlib.sha384(text.encode("utf-8")).digest()
-    return [((b - 128) / 128.0) for b in h]
+    result = []
+    for i in range(8):
+        h = hashlib.sha384(f"{i}:{text}".encode("utf-8")).digest()
+        result.extend([((b - 128) / 128.0) for b in h])
+    return result[:EMBEDDING_DIM]
 
 
 def _normalize(vec: list[float]) -> list[float]:
